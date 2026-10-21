@@ -1,0 +1,437 @@
+// FX PATTERN MEMORY — data model
+// 思想: 世界中のトレーダーの実戦チャートを「値動きの形(Pattern)」から検索・比較できるようにする。
+// Memory(実例) ≠ Pattern(複数Memoryから抽象化された型) ≠ Strategy(将来拡張、今は保持しない)。
+// ChatGPT = Analyst / このサービス = Memory・Retrieval・Research System / User = Final decision maker。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// §無料クラウド常時稼働化: Vercel(ホスティング)はローカルファイルを永続保存できないため、
+// DBはPostgreSQL(例: Vercel Postgres無料枠)へ、画像もファイルではなくDB列(Bytes)へ保存する。
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────
+
+enum Direction {
+  LONG
+  SHORT
+  WAIT
+  MIXED
+}
+
+enum Outcome {
+  WORKED
+  FAILED
+  BREAKEVEN
+  NO_TRADE
+  INVALIDATED
+  PARTIAL
+  UNKNOWN
+}
+
+enum ProcessQuality {
+  EXCELLENT
+  GOOD
+  NEUTRAL
+  POOR
+  UNRATED
+}
+
+enum Visibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum VerificationStatus {
+  UNREVIEWED
+  REVIEWED
+  USER_VERIFIED
+}
+
+enum Timeframe {
+  D1
+  H4
+  H1
+  M30
+  M15
+  M5
+  M1
+  OTHER
+}
+
+// §43 シンプル化: ENTRY(エントリー時点) / AFTER(その後) が主役。EXIT/CONTEXTは補助。
+enum ImageRole {
+  ENTRY
+  AFTER
+  EXIT
+  CONTEXT
+}
+
+enum PatternMaturity {
+  OBSERVED
+  REPEATED
+  RECURRING
+  CORE_PATTERN
+}
+
+enum MemoryPatternCaseType {
+  EXAMPLE
+  SUCCESS
+  FAILURE
+  INVALIDATED
+  COUNTEREXAMPLE
+  REFERENCE
+}
+
+enum PatternCandidateStatus {
+  PENDING
+  APPROVED_EXISTING // 既存Patternのエイリアスとして解決
+  APPROVED_VARIANT // 既存Patternのvariantとして登録
+  APPROVED_NEW // 新規Patternとして登録
+  REJECTED
+}
+
+enum SubscriptionStatus {
+  free
+  active
+  trialing
+  past_due
+  canceled
+  expired
+}
+
+enum ReportTargetType {
+  MEMORY
+  PATTERN
+  USER
+}
+
+enum ReportReason {
+  SPAM
+  MISLEADING
+  STOLEN_CONTENT
+  HARASSMENT
+  ADVERTISEMENT
+  COPYRIGHT
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ──────────────────────────────────────────────
+// User
+// ──────────────────────────────────────────────
+
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  passwordHash String
+  username     String  @unique
+  avatarUrl    String?
+
+  mainInstruments String? // JSON配列
+  mainTimeframes  String? // JSON配列
+
+  isAdmin Boolean @default(false)
+
+  locale String @default("ja") // §57 i18n: "ja" | "en"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memories         Memory[]
+  savedPatterns    SavedPattern[]
+  savedMemories    SavedMemory[]
+  reportsMade      Report[]            @relation("ReporterUser")
+  subscription     Subscription?
+  patternCandidates PatternCandidate[]
+
+  @@index([email])
+}
+
+// ──────────────────────────────────────────────
+// Memory（実例）/ ChartImage
+// ──────────────────────────────────────────────
+
+model Memory {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  symbol     String
+  marketType String  @default("FX") // FX / CRYPTO / INDEX / COMMODITY 等、将来の拡張を見込む
+  occurredAt DateTime
+
+  title       String
+  patternName String // ユーザーが書く自由記述のラベル（構造化Patternとは別）
+  summary     String
+
+  direction      Direction      @default(WAIT)
+  outcome        Outcome        @default(UNKNOWN)
+  processQuality ProcessQuality @default(UNRATED)
+  rMultiple      Float? // §81 R-Multiple（任意）
+
+  // ChatGPT分析原文。Immutable想定（編集時はMemoryRevisionへ退避）
+  chatgptRawAnalysis String?
+  entryReason        String?
+  invalidation       String?
+  lesson             String?
+  myNote             String? // §25/§53 ユーザー自身のメモ。AIは書き換えない
+
+  visibility           Visibility          @default(PRIVATE)
+  verificationStatus   VerificationStatus  @default(UNREVIEWED)
+
+  // Soft delete（誤削除防止）
+  deletedAt DateTime?
+
+  searchText String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  images    ChartImage[]
+  patterns  MemoryPattern[]
+  revisions MemoryRevision[]
+  savedBy   SavedMemory[]
+  reports   Report[]          @relation("ReportedMemory")
+
+  @@index([userId])
+  @@index([visibility])
+  @@index([deletedAt])
+  @@index([symbol])
+  @@index([createdAt])
+}
+
+// ChatGPT原文を編集する際、上書き前の内容を退避する（Immutable Raw Data）
+model MemoryRevision {
+  id       String @id @default(cuid())
+  memoryId String
+
+  field     String // "chatgptRawAnalysis" など
+  content   String
+  createdAt DateTime @default(now())
+
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  @@index([memoryId])
+}
+
+model ChartImage {
+  id       String @id @default(cuid())
+  memoryId String
+
+  timeframe Timeframe
+  role      ImageRole @default(CONTEXT)
+  storyOrder Int      @default(0)
+  caption   String?
+
+  originalFile  String // ファイル名(拡張子判定・Content-Type判定用)。元画像は絶対に加工しない
+  thumbnailFile String?
+  originalData  Bytes // 実データはDBへ保存(Vercel等ではローカルファイルが永続化されないため)
+  thumbnailData Bytes?
+  width         Int?
+  height        Int?
+
+  createdAt DateTime @default(now())
+
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  @@index([memoryId])
+}
+
+// ──────────────────────────────────────────────
+// Pattern layer
+// ──────────────────────────────────────────────
+
+model PatternFamily {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  patterns Pattern[]
+}
+
+model Pattern {
+  id       String         @id @default(cuid())
+  familyId String?
+  family   PatternFamily? @relation(fields: [familyId], references: [id])
+
+  parentPatternId String?
+  parentPattern   Pattern?  @relation("PatternVariant", fields: [parentPatternId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variants        Pattern[] @relation("PatternVariant")
+
+  slug        String  @unique
+  nameJa      String
+  nameEn      String
+  descriptionJa String?
+  descriptionEn String?
+
+  stateSequence  String? // JSON配列
+  fingerprint    String? // JSON object
+  iconDefinition String // JSON: { schemaVersion, pricePath, levels, markers }
+
+  maturity PatternMaturity @default(OBSERVED)
+  isCore   Boolean         @default(false)
+  isPinned Boolean         @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  aliases    PatternAlias[]
+  memories   MemoryPattern[]
+  rules      PatternRule[]
+  savedBy    SavedPattern[]
+  reports    Report[]           @relation("ReportedPattern")
+
+  @@index([familyId])
+  @@index([parentPatternId])
+}
+
+model PatternAlias {
+  id        String @id @default(cuid())
+  patternId String
+  alias     String
+
+  pattern Pattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  @@index([patternId])
+  @@index([alias])
+}
+
+model MemoryPattern {
+  memoryId  String
+  patternId String
+
+  caseType      MemoryPatternCaseType @default(EXAMPLE)
+  sequenceOrder Int                   @default(0)
+  isPrimary     Boolean               @default(true) // §45 is_primary: 1 Caseに複数Pattern発生時、主役はどれか
+  confidence    String?
+  notes         String?
+
+  createdAt DateTime @default(now())
+
+  memory  Memory  @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+  pattern Pattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  @@id([memoryId, patternId])
+  @@index([patternId])
+}
+
+model PatternRule {
+  id        String @id @default(cuid())
+  patternId String
+
+  rule   String
+  status String @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+
+  pattern Pattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  @@index([patternId])
+}
+
+// §31 Pattern Governance: ユーザーは新規Patternを直接作れず、候補として送信しAdminが判断する。
+model PatternCandidate {
+  id        String @id @default(cuid())
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  suggestedName        String
+  suggestedDescription String?
+  suggestedIcon        String // JSON
+  suggestedSequence    String? // JSON配列
+  memoryId             String? // §46 この候補のきっかけになったCase
+
+  status       PatternCandidateStatus @default(PENDING)
+  resolvedPatternId String? // APPROVED_EXISTING/VARIANT/NEW の結果できたPattern.id
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  resolution   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([creatorId])
+  @@index([status])
+}
+
+// ──────────────────────────────────────────────
+// Saved / Reports
+// ──────────────────────────────────────────────
+
+model SavedPattern {
+  userId    String
+  patternId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern Pattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  @@id([userId, patternId])
+  @@index([patternId])
+}
+
+model SavedMemory {
+  userId    String
+  memoryId  String
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, memoryId])
+  @@index([memoryId])
+}
+
+model Report {
+  id         String           @id @default(cuid())
+  reporterId String
+  reporter   User             @relation("ReporterUser", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  targetType ReportTargetType
+  reason     ReportReason
+  detail     String?
+  status     ReportStatus     @default(OPEN)
+
+  memoryId  String?
+  memory    Memory?  @relation("ReportedMemory", fields: [memoryId], references: [id], onDelete: Cascade)
+  patternId String?
+  pattern   Pattern? @relation("ReportedPattern", fields: [patternId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([memoryId])
+  @@index([patternId])
+}
+
+// ──────────────────────────────────────────────
+// Subscription（§48-55）。本番はStripe、開発中はMOCK_BILLING=trueでモック決済。
+// ──────────────────────────────────────────────
+
+model Subscription {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status             SubscriptionStatus @default(free)
+  region             String? // "JP" | "GLOBAL"
+  priceId            String?
+  currency           String?
+  stripeCustomerId   String?
+  stripeSubscriptionId String?
+  currentPeriodEnd   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
