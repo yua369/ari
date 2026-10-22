@@ -4,12 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 // §95-96 Mobile Navigation: HOME / PATTERNS / ＋(Record Case) / SAVED / MY JOURNAL。中央＋がRecord Case。
+// 個人利用専用アプリのため常にログイン済み扱い(Loginタブは廃止)。
 export function MobileBottomNav({
-  isAuthed,
   labels,
 }: {
-  isAuthed: boolean;
-  labels: { home: string; patterns: string; saved: string; journal: string; login: string };
+  labels: { home: string; patterns: string; saved: string; journal: string };
 }) {
   const pathname = usePathname();
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
@@ -18,12 +17,10 @@ export function MobileBottomNav({
     { href: "/", label: labels.home, icon: "⌂" },
     { href: "/patterns", label: labels.patterns, icon: "◧" },
   ];
-  const trailing = isAuthed
-    ? [
-        { href: "/saved", label: labels.saved, icon: "☆" },
-        { href: "/mypage", label: labels.journal, icon: "▤" },
-      ]
-    : [{ href: "/login", label: labels.login, icon: "→" }];
+  const trailing = [
+    { href: "/saved", label: labels.saved, icon: "☆" },
+    { href: "/mypage", label: labels.journal, icon: "▤" },
+  ];
 
   return (
     <nav

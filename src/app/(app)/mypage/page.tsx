@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { logoutAction } from "@/lib/actions/auth";
 import { t } from "@/lib/i18n";
 import { getLocale } from "@/lib/i18n/server";
 import { DirectionBadge, OutcomeBadge, VisibilityBadge } from "@/components/ui/Badge";
@@ -54,11 +53,6 @@ export default async function MyPage({ searchParams }: PageProps<"/mypage">) {
               {t(locale, "nav.admin")}
             </Link>
           )}
-          <form action={logoutAction}>
-            <button type="submit" className="btn !text-xs text-dim">
-              {t(locale, "nav.logout")}
-            </button>
-          </form>
         </div>
       </section>
 

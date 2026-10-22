@@ -70,10 +70,32 @@ export async function getCurrentUserId(): Promise<string | null> {
   return verifyToken(store.get(SESSION_COOKIE)?.value);
 }
 
+// 個人利用専用アプリのため、ログイン画面を廃止し常に唯一のオーナーアカウントとして動作する。
+// セッションCookieがあればそれを優先するが(将来の拡張用に残す)、無ければDB内の最初のUserを自動的に使う。
+let ownerUserPromise: Promise<Awaited<ReturnType<typeof getOrCreateOwnerUser>>> | null = null;
+
+async function getOrCreateOwnerUser() {
+  const existing = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+  if (existing) return existing;
+  const passwordHash = await hashPassword(sign(`owner-seed-${Date.now()}`));
+  return prisma.user.create({
+    data: {
+      email: "owner@local",
+      username: "yua",
+      passwordHash,
+      isAdmin: true,
+    },
+  });
+}
+
 export async function getCurrentUser() {
   const userId = await getCurrentUserId();
-  if (!userId) return null;
-  return prisma.user.findUnique({ where: { id: userId } });
+  if (userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user) return user;
+  }
+  if (!ownerUserPromise) ownerUserPromise = getOrCreateOwnerUser();
+  return ownerUserPromise;
 }
 
 /**

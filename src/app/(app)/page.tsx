@@ -31,21 +31,17 @@ export default async function HomePage() {
         user: { select: { username: true } },
       },
     }),
-    user
-      ? prisma.savedPattern.findMany({ where: { userId: user.id }, select: { patternId: true } })
-      : Promise.resolve([]),
+    prisma.savedPattern.findMany({ where: { userId: user.id }, select: { patternId: true } }),
     // §35 My Recent Cases: Communityより自分の行動を優先する
-    user
-      ? prisma.memory.findMany({
-          where: { userId: user.id, deletedAt: null },
-          orderBy: { createdAt: "desc" },
-          take: 3,
-          include: {
-            images: { select: { id: true, thumbnailFile: true, storyOrder: true } },
-            user: { select: { username: true } },
-          },
-        })
-      : Promise.resolve([]),
+    prisma.memory.findMany({
+      where: { userId: user.id, deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      include: {
+        images: { select: { id: true, thumbnailFile: true, storyOrder: true } },
+        user: { select: { username: true } },
+      },
+    }),
   ]);
 
   const quickPatternIds = new Set(savedPatternIds.map((s) => s.patternId));
@@ -53,25 +49,6 @@ export default async function HomePage() {
 
   return (
     <div className="flex flex-col gap-10">
-      {!user && (
-        <section className="flex flex-col gap-3 py-6">
-          <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-            {t(locale, "home.heroTitle1")}
-            <br />
-            {t(locale, "home.heroTitle2")}
-          </h1>
-          <p className="text-dim text-sm max-w-md">{t(locale, "home.heroSubtitle")}</p>
-          <div className="flex gap-2 mt-2">
-            <Link href="/signup" className="btn btn-primary !text-sm">
-              {t(locale, "home.ctaSignup")}
-            </Link>
-            <Link href="/patterns" className="btn !text-sm">
-              {t(locale, "home.ctaViewPatterns")}
-            </Link>
-          </div>
-        </section>
-      )}
-
       <section className="flex flex-col gap-4">
         <form action="/patterns" method="GET" className="flex gap-2 max-w-xl">
           <input name="q" placeholder={t(locale, "home.searchPlaceholder")} className="input" />
